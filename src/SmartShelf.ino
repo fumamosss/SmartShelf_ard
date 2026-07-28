@@ -7,7 +7,7 @@
 #include "load_cells.h"
 #include "net_client.h"
 #include "weight_monitor.h"
-#include "wardrobe_sm.h"
+#include "shelf_sm.h"
 
 // build service name from MAC: PROV_A1B2C3
 String build_service_name() {
@@ -20,7 +20,7 @@ void setup() {
     Serial.begin(SERIAL_BAUD);
     delay(1000);
 
-    Serial.println("=== SmartWardrobe ===");
+    Serial.println("=== SmartShelf ===");
     Serial.printf("Arduino-ESP32: %d.%d.%d\n",
                   ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR, ESP_ARDUINO_VERSION_PATCH);
     Serial.printf("ESP-IDF: %s\n", esp_get_idf_version());
@@ -53,11 +53,11 @@ void setup() {
     }
 
     // ── Start state machine ──────────────────────────────────────────────────
-    wardrobe_sm_begin();
+    shelf_sm_begin();
     Serial.println("[BOOT] system ready\n");
 }
 
 void loop() {
     wifi_manager_check_reconnect();
-    wardrobe_sm_update();
+    shelf_sm_update();
 }

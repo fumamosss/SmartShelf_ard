@@ -1,10 +1,10 @@
-#include "wardrobe_sm.h"
+#include "shelf_sm.h"
 #include "nfc.h"
 #include "load_cells.h"
 #include "weight_monitor.h"
 #include "api_client.h"
 
-static WardrobeState state = WS_IDLE;
+static ShelfState state = SS_IDLE;
 static unsigned long state_enter_time = 0;
 static String current_uid = "";
 
@@ -13,20 +13,20 @@ static const unsigned long RESULT_DISPLAY_MS = 2000;
 
 // ── State transitions ────────────────────────────────────────────────────────
 
-static void enter_state(WardrobeState new_state) {
+static void enter_state(ShelfState new_state) {
     state = new_state;
     state_enter_time = millis();
-    Serial.printf("[SM] → %s\n", wardrobe_sm_state_name(new_state));
+    Serial.printf("[SM] → %s\n", shelf_sm_state_name(new_state));
 }
 
-void wardrobe_sm_begin() {
-    state = WS_IDLE;
+void shelf_sm_begin() {
+    state = SS_IDLE;
     state_enter_time = millis();
     current_uid = "";
-    Serial.println("[SM] wardrobe state machine ready — waiting for NFC card");
+    Serial.println("[SM] shelf state machine ready — waiting for NFC card");
 }
 
-void wardrobe_sm_update() {
+void shelf_sm_update() {
     unsigned long now = millis();
 
     switch (state) {
@@ -34,7 +34,7 @@ void wardrobe_sm_update() {
     // ═══════════════════════════════════════════════════════════════════════════
     // IDLE — wait for NFC card
     // ═══════════════════════════════════════════════════════════════════════════
-    case WS_IDLE: {
+    case SS_IDLE: {
         if (!nfc_card_available()) return;
 
         String uid = nfc_read_card_uid();
@@ -51,7 +51,7 @@ void wardrobe_sm_update() {
 
         if (!result.success) {
             Serial.println("[SM] 1C unavailable — cannot authenticate");
-            enter_state(WS_ERROR);
+            enter_state(SS_ERROR);
             return;
         }
 
@@ -62,7 +62,7 @@ void wardrobe_sm_update() {
             }
             Serial.println();
             nfc_reset_repeat_timer();
-            enter_state(WS_ERROR);
+            enter_state(SS_ERROR);
             return;
         }
 
@@ -71,28 +71,28 @@ void wardrobe_sm_update() {
 
         // Start weight monitoring
         weight_monitor_start();
-        enter_state(WS_CAPTURING_BASELINE);
+        enter_state(SS_CAPTURING_BASELINE);
         break;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CAPTURING_BASELINE — weight_monitor captures initial readings
     // ═══════════════════════════════════════════════════════════════════════════
-    case WS_CAPTURING_BASELINE:
+    case SS_CAPTURING_BASELINE:
         weight_monitor_update();
 
         if (weight_monitor_get_state() == WM_WAITING_FOR_CHANGE) {
-            enter_state(WS_WAITING_FOR_WEIGHT);
+            enter_state(SS_WAITING_FOR_WEIGHT);
         } else if (weight_monitor_get_state() == WM_TIMEOUT) {
             Serial.println("[SM] baseline capture failed");
-            enter_state(WS_ERROR);
+            enter_state(SS_ERROR);
         }
         break;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // WAITING_FOR_WEIGHT — user takes/puts item, monitor detects change
     // ═══════════════════════════════════════════════════════════════════════════
-    case WS_WAITING_FOR_WEIGHT:
+    case SS_WAITING_FOR_WEIGHT:
         weight_monitor_update();
 
         if (weight_monitor_get_state() == WM_OPERATION_COMPLETE) {
@@ -106,65 +106,61 @@ void wardrobe_sm_update() {
 
             if (op.success && op.accepted) {
                 Serial.printf("[SM] operation accepted by 1C: %s\n", op.message.c_str());
-                enter_state(WS_SUCCESS);
+                enter_state(SS_SUCCESS);
             } else if (op.success && !op.accepted) {
                 Serial.printf("[SM] operation REJECTED by 1C: %s\n", op.message.c_str());
-                enter_state(WS_ERROR);
+                enter_state(SS_ERROR);
             } else {
                 Serial.println("[SM] failed to send operation to 1C");
-                enter_state(WS_ERROR);
+                enter_state(SS_ERROR);
             }
         } else if (weight_monitor_get_state() == WM_TIMEOUT) {
             Serial.println("[SM] operation timed out — user took no action");
-            enter_state(WS_ERROR);
+            enter_state(SS_ERROR);
         }
         break;
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SENDING_OPERATION — (handled inline in WAITING_FOR_WEIGHT above)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    // ═══════════════════════════════════════════════════════════════════════════
     // SUCCESS — brief display, then return to IDLE
     // ═══════════════════════════════════════════════════════════════════════════
-    case WS_SUCCESS:
+    case SS_SUCCESS:
         if (now - state_enter_time >= RESULT_DISPLAY_MS) {
             weight_monitor_reset();
             nfc_reset_repeat_timer();
             current_uid = "";
             Serial.println("[SM] operation complete — ready for next card");
-            enter_state(WS_IDLE);
+            enter_state(SS_IDLE);
         }
         break;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERROR — brief display, then return to IDLE
     // ═══════════════════════════════════════════════════════════════════════════
-    case WS_ERROR:
+    case SS_ERROR:
         if (now - state_enter_time >= RESULT_DISPLAY_MS) {
             weight_monitor_reset();
             nfc_reset_repeat_timer();
             current_uid = "";
             Serial.println("[SM] error handled — ready for next card");
-            enter_state(WS_IDLE);
+            enter_state(SS_IDLE);
         }
         break;
     }
 }
 
-WardrobeState wardrobe_sm_get_state() {
+ShelfState shelf_sm_get_state() {
     return state;
 }
 
-const char* wardrobe_sm_state_name(WardrobeState s) {
+const char* shelf_sm_state_name(ShelfState s) {
     switch (s) {
-        case WS_IDLE:                 return "IDLE";
-        case WS_AUTHENTICATING:       return "AUTHENTICATING";
-        case WS_CAPTURING_BASELINE:   return "CAPTURING_BASELINE";
-        case WS_WAITING_FOR_WEIGHT:   return "WAITING_FOR_WEIGHT";
-        case WS_SENDING_OPERATION:    return "SENDING_OPERATION";
-        case WS_SUCCESS:              return "SUCCESS";
-        case WS_ERROR:                return "ERROR";
+        case SS_IDLE:                 return "IDLE";
+        case SS_AUTHENTICATING:       return "AUTHENTICATING";
+        case SS_CAPTURING_BASELINE:   return "CAPTURING_BASELINE";
+        case SS_WAITING_FOR_WEIGHT:   return "WAITING_FOR_WEIGHT";
+        case SS_SENDING_OPERATION:    return "SENDING_OPERATION";
+        case SS_SUCCESS:              return "SUCCESS";
+        case SS_ERROR:                return "ERROR";
         default:                      return "UNKNOWN";
     }
 }

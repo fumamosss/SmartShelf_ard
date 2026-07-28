@@ -28,10 +28,10 @@
 #define API_BASE_URL "http://192.168.1.100:8080"
 
 // USER CONFIGURATION: CHANGE THIS — NFC verification endpoint
-#define API_NFC_CHECK_ENDPOINT "/api/wardrobe/nfc"
+#define API_NFC_CHECK_ENDPOINT "/api/shelf/nfc"
 
 // USER CONFIGURATION: CHANGE THIS — weight operation endpoint
-#define API_OPERATION_ENDPOINT "/api/wardrobe/operation"
+#define API_OPERATION_ENDPOINT "/api/shelf/operation"
 
 // ── PN532 NFC Reader ────────────────────────────────────────────────────────
 // TODO: SET YOUR PN532 SDA PIN (GPIO21 is default I2C SDA on ESP32)

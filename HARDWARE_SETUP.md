@@ -1,4 +1,4 @@
-# SmartWardrobe — Hardware Setup Guide
+# SmartShelf — Hardware Setup Guide
 
 ## Quick Start
 
@@ -64,8 +64,8 @@ HX711 module wiring: VCC→3.3V (or 5V), GND→GND, DT→GPIOxx, SCK→GPIOxx.
 In `src/config.h`:
 ```c
 #define API_BASE_URL "http://192.168.1.100:8080"
-#define API_NFC_CHECK_ENDPOINT "/api/wardrobe/nfc"
-#define API_OPERATION_ENDPOINT "/api/wardrobe/operation"
+#define API_NFC_CHECK_ENDPOINT "/api/shelf/nfc"
+#define API_OPERATION_ENDPOINT "/api/shelf/operation"
 ```
 
 Replace `192.168.1.100:8080` with your computer's IP and port running the 1C mock server or 1C extension.
@@ -77,7 +77,7 @@ Replace `192.168.1.100:8080` with your computer's IP and port running the 1C moc
 ### Request 1: NFC Check
 
 ```
-GET http://YOUR_IP:PORT/api/wardrobe/nfc?uid=A1B2C3D4
+GET http://YOUR_IP:PORT/api/shelf/nfc?uid=A1B2C3D4
 ```
 
 Expected 1C response:
@@ -100,7 +100,7 @@ Or access denied:
 ### Request 2: Submit Operation
 
 ```
-POST http://YOUR_IP:PORT/api/wardrobe/operation
+POST http://YOUR_IP:PORT/api/shelf/operation
 Content-Type: application/json
 ```
 
@@ -203,7 +203,7 @@ import json
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if '/api/wardrobe/nfc' in self.path:
+        if '/api/shelf/nfc' in self.path:
             uid = self.path.split('uid=')[1] if 'uid=' in self.path else '???'
             print(f"NFC check: uid={uid}")
             resp = {"success": True, "allowed": True, "user": "Test User"}
@@ -241,7 +241,7 @@ Set `API_BASE_URL` in config.h to `http://YOUR_COMPUTER_IP:8080`, then flash.
 
 1. **No saved credentials** → BLE provisioning starts → connect via ESP BLE Provisioning app → enter WiFi SSID/password
 2. **Credentials saved** → WiFi connects automatically
-3. **Ready** → `[SM] wardrobe state machine ready — waiting for NFC card`
+3. **Ready** → `[SM] shelf state machine ready — waiting for NFC card`
 4. **Tap card** → UID sent to 1C → if allowed, baseline captured
 5. **Take/put item** → weight changes detected → stabilized → sent to 1C
 6. **Reboot** → auto-connects to saved WiFi → ready again
@@ -257,7 +257,7 @@ Set `API_BASE_URL` in config.h to `http://YOUR_COMPUTER_IP:8080`, then flash.
 | `src/load_cells.h/.cpp` | 8×HX711 reader with shared SCK |
 | `src/api_client.h/.cpp` | 1C API (NFC check + operation submit) |
 | `src/weight_monitor.h/.cpp` | Baseline capture, change detection, stability |
-| `src/wardrobe_sm.h/.cpp` | State machine: IDLE→AUTH→BASELINE→WEIGHT→SEND→DONE |
+| `src/shelf_sm.h/.cpp` | State machine: IDLE→AUTH→BASELINE→WEIGHT→SEND→DONE |
 | `src/net_client.h/.cpp` | HTTP GET/POST (unchanged) |
-| `src/SmartWardrobe.ino` | Main — setup/loop, delegates to modules |
+| `src/SmartShelf.ino` | Main — setup/loop, delegates to modules |
 | `platformio.ini` | Added Adafruit PN532, HX711, ArduinoJson deps |
