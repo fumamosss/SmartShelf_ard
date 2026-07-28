@@ -3,9 +3,6 @@
 
 #include <Arduino.h>
 
-// Initialize HTTP client module.
-void net_client_begin();
-
 // ── HTTP requests ─────────────────────────────────────────────────────────────
 // All functions return the response body as String.
 // On failure: returns empty string, logs error with [NET] prefix.
