@@ -25,7 +25,7 @@
 
 // ── 1C API Endpoints ────────────────────────────────────────────────────────
 // USER CONFIGURATION: CHANGE THIS — set your 1C server IP and port
-#define API_BASE_URL "http://192.168.1.100:8080"
+#define API_BASE_URL "http://31.25.243.238:8213/SmartShelf_2237"
 
 // USER CONFIGURATION: CHANGE THIS — NFC verification endpoint
 #define API_NFC_CHECK_ENDPOINT "/api/shelf/nfc"
