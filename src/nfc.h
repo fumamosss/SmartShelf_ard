@@ -8,14 +8,14 @@
 // Returns false if PN532 is not connected or not responding.
 bool nfc_begin();
 
-// Check if an NFC card/tag is present and readable.
-// Returns true if a card is detected within range.
-bool nfc_card_available();
-
 // Read the UID of the currently present card.
 // Returns UID as hex string (e.g. "A1B2C3D4").
 // Returns empty string if no card or read error.
 String nfc_read_card_uid();
+
+// Mark the given UID as accepted (anti-repeat tracking).
+// Must be called after nfc_is_duplicate() returns false.
+void nfc_accept_uid(const String &uid);
 
 // Check if a UID was read recently (anti-repeat protection).
 // Returns true if the given UID was read within NFC_REPEAT_DELAY_MS.

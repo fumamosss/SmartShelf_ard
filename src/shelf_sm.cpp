@@ -35,13 +35,15 @@ void shelf_sm_update() {
     // IDLE — wait for NFC card
     // ═══════════════════════════════════════════════════════════════════════════
     case SS_IDLE: {
-        if (!nfc_card_available()) return;
-
+        // Single read — detects card AND returns UID
         String uid = nfc_read_card_uid();
         if (uid.length() == 0) return;
 
         // Anti-repeat: skip if same card read recently
         if (nfc_is_duplicate(uid)) return;
+
+        // Mark this UID as accepted so future reads are blocked by anti-repeat
+        nfc_accept_uid(uid);
 
         Serial.printf("[SM] card detected: %s\n", uid.c_str());
         current_uid = uid;

@@ -33,16 +33,6 @@ bool nfc_begin() {
     return true;
 }
 
-bool nfc_card_available() {
-    if (!nfc_initialized) return false;
-
-    uint8_t uid[7];
-    uint8_t uid_len;
-    bool success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uid_len, 100);
-
-    return success;
-}
-
 String nfc_read_card_uid() {
     if (!nfc_initialized) return "";
 
@@ -60,10 +50,12 @@ String nfc_read_card_uid() {
     }
     uid_str.toUpperCase();
 
-    last_uid = uid_str;
-    last_read_time = millis();
-
     return uid_str;
+}
+
+void nfc_accept_uid(const String &uid) {
+    last_uid = uid;
+    last_read_time = millis();
 }
 
 bool nfc_is_duplicate(const String &uid) {
