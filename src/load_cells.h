@@ -34,6 +34,11 @@ bool load_cells_is_online(int sensor_id);
 // load_cells_read_all() call. Returns false if cached value was used.
 bool load_cells_has_new_data(int sensor_id);
 
+// Consume a pending fresh reading (if available).
+// On the first call after a fresh read, returns true and writes the value to *value,
+// then clears the pending flag. Subsequent calls return false until the next fresh read.
+bool load_cells_consume_new_data(int sensor_id, long* value);
+
 // Get a human-readable status for each sensor.
 // Returns "OK" (online) or "NO_RESPONSE" (offline at init).
 const char* load_cells_sensor_status(int sensor_id);

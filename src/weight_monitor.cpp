@@ -63,8 +63,9 @@ void weight_monitor_update() {
             load_cells_read_all(readings);
 
             for (int i = 0; i < NUM_SENSORS; i++) {
-                if (!load_cells_has_new_data(i)) continue;
-                baseline[i] += readings[i];
+                long fresh_val;
+                if (!load_cells_consume_new_data(i, &fresh_val)) continue;
+                baseline[i] += fresh_val;
                 baseline_count[i]++;
             }
             break;
@@ -73,13 +74,15 @@ void weight_monitor_update() {
         // Time window expired — compute per-sensor average
         Serial.println("[WM] baseline complete:");
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (load_cells_is_online(i) && baseline_count[i] > 0) {
-                baseline[i] /= baseline_count[i];
-                Serial.printf("[WM]   sensor %d: samples=%d value=%ld\n",
+            if (load_cells_is_online(i)) {
+                if (baseline_count[i] > 0) {
+                    baseline[i] /= baseline_count[i];
+                }
+                Serial.printf("[WM]   sensor %d online samples=%d value=%ld\n",
                               i, baseline_count[i], baseline[i]);
             } else {
                 baseline[i] = 0;
-                Serial.printf("[WM]   sensor %d: samples=%d value=%ld (offline)\n",
+                Serial.printf("[WM]   sensor %d offline samples=%d value=%ld\n",
                               i, baseline_count[i], baseline[i]);
             }
             stable_weight[i] = baseline[i];
@@ -106,9 +109,10 @@ void weight_monitor_update() {
         // Check any sensor changed significantly from stable weight
         bool changed = false;
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (!load_cells_has_new_data(i)) continue;
+            long fresh_val;
+            if (!load_cells_consume_new_data(i, &fresh_val)) continue;
 
-            long diff = readings[i] - stable_weight[i];
+            long diff = fresh_val - stable_weight[i];
             if (diff < 0) diff = -diff;
 
             if (diff > WEIGHT_CHANGE_THRESHOLD) {
@@ -144,19 +148,19 @@ void weight_monitor_update() {
 
         // Per-sensor stability check against the reference (changing_ref)
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (!load_cells_has_new_data(i)) continue;
+            long fresh_val;
+            if (!load_cells_consume_new_data(i, &fresh_val)) continue;
 
-            long diff = readings[i] - changing_ref[i];
+            long diff = fresh_val - changing_ref[i];
             if (diff < 0) diff = -diff;
 
             if (diff <= WEIGHT_STABLE_TOLERANCE) {
                 stable_samples[i]++;
-                // Cap so int overflow doesn't cause false completion
                 if (stable_samples[i] > WEIGHT_STABLE_SAMPLES)
                     stable_samples[i] = WEIGHT_STABLE_SAMPLES;
             } else {
                 // Jump detected — shift reference, reset this sensor's counter
-                changing_ref[i] = readings[i];
+                changing_ref[i] = fresh_val;
                 stable_samples[i] = 0;
             }
         }

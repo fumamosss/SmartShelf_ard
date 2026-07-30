@@ -12,19 +12,22 @@ static HX711 scales[NUM_SENSORS];
 static const int DT_PINS[NUM_SENSORS]  = HX711_DT_PINS;
 static const int SCK_PINS[NUM_SENSORS] = HX711_SCK_PINS;
 
-// Cache of last good reading per sensor
+// Cache of last good reading per sensor (always valid)
 static long cached_values[NUM_SENSORS] = {0};
 
 // Physical connection — set once at init, never changes
 static bool sensor_online[NUM_SENSORS] = {false};
 
-// True if the sensor returned fresh data in the last read_all()
-static bool sensor_has_new_data[NUM_SENSORS] = {false};
-
-// Per-sensor rate-limit timestamp
+// ── Fresh-data tracking ───────────────────────────────────────────────────────
+// last_fresh_values[i]    — most recent raw value read from HX711
+// sensor_new_data_pending — true after a successful read, cleared by consume()
+// last_read_time[i]       — timestamp of last successful read (rate-limit)
+static long last_fresh_values[NUM_SENSORS] = {0};
+static bool sensor_new_data_pending[NUM_SENSORS] = {false};
 static unsigned long last_read_time[NUM_SENSORS] = {0};
 
-// Count of sensors that passed init
+// Round-robin: fair rotation over shared SCK (reading one consumes all)
+static int robin_start = 0;
 static int healthy_count = 0;
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -81,9 +84,7 @@ long load_cells_read_raw(int sensor_id) {
 
     unsigned long now = millis();
 
-    // Rate-limit: respect HX711 10 SPS
     if (now - last_read_time[sensor_id] < HX711_READ_INTERVAL_MS) {
-        sensor_has_new_data[sensor_id] = false;
         return cached_values[sensor_id];
     }
 
@@ -91,68 +92,67 @@ long load_cells_read_raw(int sensor_id) {
         long value = scales[sensor_id].read();
 
         if (value == -8388608 || value == 8388607) {
-            sensor_has_new_data[sensor_id] = false;
             return cached_values[sensor_id];
         }
 
         cached_values[sensor_id] = value;
+        last_fresh_values[sensor_id] = value;
         last_read_time[sensor_id] = now;
-        sensor_has_new_data[sensor_id] = true;
+        sensor_new_data_pending[sensor_id] = true;
         return value;
     }
 
-    sensor_has_new_data[sensor_id] = false;
     return cached_values[sensor_id];
 }
 
-// ── Read all sensors ──────────────────────────────────────────────────────────
+// ── Read all sensors (round-robin, shared-SCK-safe) ───────────────────────────
 
 bool load_cells_read_all(long values[NUM_SENSORS]) {
     unsigned long now = millis();
+    int read_idx = -1;
 
-    for (int i = 0; i < NUM_SENSORS; i++) {
-        // Rate-limit per sensor — don't poll faster than ~10 SPS
-        if (now - last_read_time[i] < HX711_READ_INTERVAL_MS) {
-            values[i] = cached_values[i];
-            sensor_has_new_data[i] = false;
-#if HX711_READ_LOG
-            Serial.printf("[HX711] sensor %d waiting\n", i);
-#endif
-            continue;
-        }
+    // Fair round-robin: try sensors starting from robin_start
+    for (int offset = 0; offset < NUM_SENSORS; offset++) {
+        int i = (robin_start + offset) % NUM_SENSORS;
+
+        // Rate-limit per sensor
+        if (now - last_read_time[i] < HX711_READ_INTERVAL_MS) continue;
 
         if (scales[i].is_ready()) {
             long value = scales[i].read();
 
-            // Reject power-up garbage values
-            if (value == -8388608 || value == 8388607) {
-                values[i] = cached_values[i];
-                sensor_has_new_data[i] = false;
-#if HX711_READ_LOG
-                Serial.printf("[HX711] sensor %d stale (power-up value)\n", i);
-#endif
-                continue;
-            }
+            if (value == -8388608 || value == 8388607) continue;
 
-            // Fresh reading
             cached_values[i] = value;
+            last_fresh_values[i] = value;
             last_read_time[i] = now;
-            sensor_has_new_data[i] = true;
-            values[i] = value;
-#if HX711_READ_LOG
-            Serial.printf("[HX711] sensor %d fresh raw=%ld\n", i, value);
-#endif
-        } else {
-            // Sensor not ready this cycle — return cached value, NOT an error
-            values[i] = cached_values[i];
-            sensor_has_new_data[i] = false;
-#if HX711_READ_LOG
-            Serial.printf("[HX711] sensor %d waiting\n", i);
-#endif
+            sensor_new_data_pending[i] = true;
+            read_idx = i;
+            break;  // shared SCK — only one sensor per cycle
         }
     }
 
-    return true;  // cache always available
+    // Fill output with cached values (fresh one already updated above)
+    for (int i = 0; i < NUM_SENSORS; i++) {
+        values[i] = cached_values[i];
+    }
+
+    // Advance round-robin start for next cycle
+    if (read_idx >= 0) {
+        robin_start = (read_idx + 1) % NUM_SENSORS;
+    }
+
+    return true;
+}
+
+// ── Consume pending fresh data (persistent across cycles) ─────────────────────
+
+bool load_cells_consume_new_data(int sensor_id, long* value) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return false;
+    if (!sensor_new_data_pending[sensor_id]) return false;
+    *value = last_fresh_values[sensor_id];
+    sensor_new_data_pending[sensor_id] = false;
+    return true;
 }
 
 // ── Utility accessors ─────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ bool load_cells_is_online(int sensor_id) {
 
 bool load_cells_has_new_data(int sensor_id) {
     if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return false;
-    return sensor_has_new_data[sensor_id];
+    return sensor_new_data_pending[sensor_id];
 }
 
 const char* load_cells_sensor_status(int sensor_id) {
