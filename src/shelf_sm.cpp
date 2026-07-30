@@ -48,28 +48,8 @@ void shelf_sm_update() {
         Serial.printf("[SM] card detected: %s\n", uid.c_str());
         current_uid = uid;
 
-        // Verify card with 1C
-        NfcCheckResult result = api_check_nfc(uid);
-
-        if (!result.success) {
-            Serial.println("[SM] 1C unavailable — cannot authenticate");
-            enter_state(SS_ERROR);
-            return;
-        }
-
-        if (!result.allowed) {
-            Serial.printf("[SM] ACCESS DENIED for UID %s", uid.c_str());
-            if (result.user_name.length() > 0) {
-                Serial.printf(" (user: %s)", result.user_name.c_str());
-            }
-            Serial.println();
-            nfc_reset_repeat_timer();
-            enter_state(SS_ERROR);
-            return;
-        }
-
-        Serial.printf("[SM] ACCESS GRANTED for %s (UID: %s)\n",
-                      result.user_name.c_str(), uid.c_str());
+        Serial.println("[SM] API bypass — auto-granting access");
+        Serial.printf("[SM] ACCESS GRANTED for UID: %s\n", uid.c_str());
 
         // Start weight monitoring
         weight_monitor_start();
@@ -98,24 +78,8 @@ void shelf_sm_update() {
         weight_monitor_update();
 
         if (weight_monitor_get_state() == WM_OPERATION_COMPLETE) {
-            // Weight operation done — send results to 1C
-            OperationResult op = api_submit_operation(
-                current_uid,
-                weight_monitor_get_baseline(),
-                weight_monitor_get_final(),
-                weight_monitor_get_delta()
-            );
-
-            if (op.success && op.accepted) {
-                Serial.printf("[SM] operation accepted by 1C: %s\n", op.message.c_str());
-                enter_state(SS_SUCCESS);
-            } else if (op.success && !op.accepted) {
-                Serial.printf("[SM] operation REJECTED by 1C: %s\n", op.message.c_str());
-                enter_state(SS_ERROR);
-            } else {
-                Serial.println("[SM] failed to send operation to 1C");
-                enter_state(SS_ERROR);
-            }
+            Serial.println("[SM] API bypass — operation auto-accepted");
+            enter_state(SS_SUCCESS);
         } else if (weight_monitor_get_state() == WM_TIMEOUT) {
             Serial.println("[SM] operation timed out — user took no action");
             enter_state(SS_ERROR);
