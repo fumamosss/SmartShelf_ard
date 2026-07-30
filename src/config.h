@@ -47,17 +47,17 @@
 #define NFC_REPEAT_DELAY_MS 3000
 
 // ── HX711 Load Cells ────────────────────────────────────────────────────────
-#define NUM_SENSORS 3
-#define SENSORS_PER_SHELF 3
-#define NUM_SHELVES 1
+#define NUM_SENSORS 8
+#define SENSORS_PER_SHELF 4
+#define NUM_SHELVES 2
 
 // TODO: SET YOUR HX711 DT PINS — one per sensor
 // Shelf 0: sensors 0..3
 // Shelf 1: sensors 4..7
-#define HX711_DT_PINS {19, 23, 25 }
+#define HX711_DT_PINS { 4, 5, 16, 17, 18, 19, 23, 25 }
 
 // TODO: SET YOUR HX711 SCK PINS — one per sensor (or all same for shared SCK)
-#define HX711_SCK_PINS {26, 26, 26 }
+#define HX711_SCK_PINS { 26, 26, 26, 26, 26, 26, 26, 26 }
 
 // HX711 gain: 128 (default), 64, or 32
 #define HX711_GAIN 128
