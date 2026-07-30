@@ -3,17 +3,26 @@
 
 static WeightState state = WM_IDLE;
 
+// ── Baseline tracking (per-sensor) ────────────────────────────────────────────
 static long baseline[NUM_SENSORS] = {0};
-static int baseline_count[NUM_SENSORS] = {0};  // per-sensor sample counter
-static long current[NUM_SENSORS] = {0};
+static int baseline_count[NUM_SENSORS] = {0};
+
+// ── Current stable reference (pre-change) ────────────────────────────────────
+static long stable_weight[NUM_SENSORS] = {0};
+
+// ── Stabilization tracking ────────────────────────────────────────────────────
+static long changing_ref[NUM_SENSORS] = {0};   // first reading after change
+static int stable_samples[NUM_SENSORS] = {0};  // per-sensor consecutive stable count
+
+// ── Operation results ─────────────────────────────────────────────────────────
 static long final_values[NUM_SENSORS] = {0};
 static long delta[NUM_SENSORS] = {0};
 
-static unsigned long baseline_start = 0;
-static int baseline_sample_count = 0;
-static unsigned long last_sample_time = 0;
-static unsigned long stable_since = 0;
+// ── Timing ────────────────────────────────────────────────────────────────────
+static unsigned long last_poll_time = 0;
 static unsigned long operation_start = 0;
+
+// ── Public API ────────────────────────────────────────────────────────────────
 
 void weight_monitor_begin() {
     state = WM_IDLE;
@@ -21,171 +30,162 @@ void weight_monitor_begin() {
 }
 
 void weight_monitor_start() {
-    // Reset all values
     for (int i = 0; i < NUM_SENSORS; i++) {
-        baseline[i] = 0;
-        baseline_count[i] = 0;
-        current[i] = 0;
-        final_values[i] = 0;
-        delta[i] = 0;
+        baseline[i]         = 0;
+        baseline_count[i]   = 0;
+        stable_weight[i]    = 0;
+        changing_ref[i]     = 0;
+        stable_samples[i]   = 0;
+        final_values[i]     = 0;
+        delta[i]            = 0;
     }
-
-    baseline_sample_count = 0;
-    baseline_start = millis();
-    last_sample_time = 0;
-    stable_since = 0;
-    operation_start = millis();
+    last_poll_time   = 0;
+    operation_start  = millis();
 
     state = WM_CAPTURING_BASELINE;
     Serial.println("[WM] capturing baseline...");
 }
 
 void weight_monitor_update() {
+    unsigned long now = millis();
+    if (now - last_poll_time < HX711_SAMPLE_INTERVAL_MS) return;
+    last_poll_time = now;
+
     switch (state) {
 
-    // ── CAPTURING BASELINE ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  CAPTURING BASELINE — each sensor collects N fresh readings
+    // ═══════════════════════════════════════════════════════════════════════════
     case WM_CAPTURING_BASELINE: {
-        unsigned long now = millis();
-
-        // Take samples at configured intervals
-        if (now - last_sample_time < WEIGHT_BASELINE_SAMPLE_DELAY_MS) return;
-        last_sample_time = now;
-
         long readings[NUM_SENSORS];
         load_cells_read_all(readings);
 
-        // Per-sensor accumulation — only fresh readings count
-        bool any_fresh = false;
+        // Accumulate only fresh readings per sensor
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (load_cells_has_new_data(i)) {
-                baseline[i] += readings[i];
-                baseline_count[i]++;
-                any_fresh = true;
-            }
+            if (!load_cells_has_new_data(i)) continue;
+            baseline[i] += readings[i];
+            baseline_count[i]++;
         }
 
-        if (!any_fresh) {
-            // Nothing new this cycle — retry without counting
-            return;
-        }
-
-        // Check if all online sensors have enough samples
-        bool baseline_done = true;
+        // Check completion — all online sensors must hit WEIGHT_BASELINE_SAMPLES
+        bool done = true;
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (load_cells_is_online(i) && baseline_count[i] < WEIGHT_BASELINE_SAMPLES) {
-                baseline_done = false;
-                break;
-            }
-        }
-
-        if (baseline_done) {
-            // Average per sensor (each may have its own count)
-            for (int i = 0; i < NUM_SENSORS; i++) {
-                if (baseline_count[i] > 0) {
-                    baseline[i] /= baseline_count[i];
+            if (!load_cells_is_online(i)) continue;
+            if (baseline_count[i] >= WEIGHT_BASELINE_SAMPLES) {
+                // Print milestone once (count just hit the target)
+                if (baseline_count[i] == WEIGHT_BASELINE_SAMPLES) {
+                    baseline[i] /= WEIGHT_BASELINE_SAMPLES;
+                    Serial.printf("[WM] baseline sensor %d: %d/%d\n",
+                                  i, WEIGHT_BASELINE_SAMPLES, WEIGHT_BASELINE_SAMPLES);
                 }
+            } else {
+                done = false;
             }
+        }
 
-            state = WM_WAITING_FOR_CHANGE;
-            Serial.println("[WM] baseline captured:");
+        if (done) {
             for (int i = 0; i < NUM_SENSORS; i++) {
-                Serial.printf("[WM]   sensor_%d = %ld\n", i, baseline[i]);
+                stable_weight[i] = baseline[i];
             }
+            state = WM_WAITING_FOR_CHANGE;
+            Serial.println("[WM] baseline complete — monitoring for change");
         }
         break;
     }
 
-    // ── WAITING FOR CHANGE ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  WAITING FOR CHANGE — compare fresh readings against stable_weight
+    // ═══════════════════════════════════════════════════════════════════════════
     case WM_WAITING_FOR_CHANGE: {
-        unsigned long now = millis();
-
-        // Operation timeout
         if (now - operation_start > WEIGHT_OPERATION_TIMEOUT_MS) {
             Serial.println("[WM] TIMEOUT — no weight change detected");
             state = WM_TIMEOUT;
             return;
         }
 
-        // Sample at configured interval
-        if (now - last_sample_time < WEIGHT_SAMPLE_INTERVAL_MS) return;
-        last_sample_time = now;
-
         long readings[NUM_SENSORS];
         load_cells_read_all(readings);
 
-        // Check if any sensor changed beyond threshold
-        bool change_detected = false;
+        // Check any sensor changed significantly from stable weight
+        bool changed = false;
         for (int i = 0; i < NUM_SENSORS; i++) {
-            long diff = readings[i] - baseline[i];
+            if (!load_cells_has_new_data(i)) continue;
+
+            long diff = readings[i] - stable_weight[i];
             if (diff < 0) diff = -diff;
+
             if (diff > WEIGHT_CHANGE_THRESHOLD) {
-                change_detected = true;
+                changed = true;
                 break;
             }
         }
 
-        if (change_detected) {
-            // Store current readings as the start of the change
+        if (changed) {
+            // Capture reference values at change moment
             for (int i = 0; i < NUM_SENSORS; i++) {
-                current[i] = readings[i];
+                changing_ref[i] = readings[i];
+                stable_samples[i] = 0;
             }
-            stable_since = now;
             state = WM_WAITING_FOR_STABLE;
             Serial.println("[WM] weight change detected — waiting for stability...");
         }
         break;
     }
 
-    // ── WAITING FOR STABLE ───────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  WAITING FOR STABLE — collect N consecutive stable fresh readings
+    // ═══════════════════════════════════════════════════════════════════════════
     case WM_WAITING_FOR_STABLE: {
-        unsigned long now = millis();
-
-        // Operation timeout
         if (now - operation_start > WEIGHT_OPERATION_TIMEOUT_MS) {
             Serial.println("[WM] TIMEOUT — weight never stabilized");
             state = WM_TIMEOUT;
             return;
         }
 
-        // Sample at configured interval
-        if (now - last_sample_time < WEIGHT_SAMPLE_INTERVAL_MS) return;
-        last_sample_time = now;
-
         long readings[NUM_SENSORS];
         load_cells_read_all(readings);
 
-        // Check if all readings are close to what they were when change was detected
-        bool still_stable = true;
+        // Per-sensor stability check against the reference (changing_ref)
         for (int i = 0; i < NUM_SENSORS; i++) {
-            long diff = readings[i] - current[i];
+            if (!load_cells_has_new_data(i)) continue;
+
+            long diff = readings[i] - changing_ref[i];
             if (diff < 0) diff = -diff;
-            if (diff > WEIGHT_STABLE_TOLERANCE) {
-                still_stable = false;
-                // Update current with latest reading for continued tracking
-                current[i] = readings[i];
+
+            if (diff <= WEIGHT_STABLE_TOLERANCE) {
+                stable_samples[i]++;
+                // Cap so int overflow doesn't cause false completion
+                if (stable_samples[i] > WEIGHT_STABLE_SAMPLES)
+                    stable_samples[i] = WEIGHT_STABLE_SAMPLES;
+            } else {
+                // Jump detected — shift reference, reset this sensor's counter
+                changing_ref[i] = readings[i];
+                stable_samples[i] = 0;
+            }
+        }
+
+        // All online sensors must have reached the stable sample count
+        bool all_stable = true;
+        for (int i = 0; i < NUM_SENSORS; i++) {
+            if (!load_cells_is_online(i)) continue;
+            if (stable_samples[i] < WEIGHT_STABLE_SAMPLES) {
+                all_stable = false;
                 break;
             }
         }
 
-        if (still_stable) {
-            // Check if stable long enough
-            if (now - stable_since >= WEIGHT_STABLE_TIME_MS) {
-                // Capture final values
-                for (int i = 0; i < NUM_SENSORS; i++) {
-                    final_values[i] = readings[i];
-                    delta[i] = final_values[i] - baseline[i];
-                }
-
-                state = WM_OPERATION_COMPLETE;
-                Serial.println("[WM] operation complete:");
-                for (int i = 0; i < NUM_SENSORS; i++) {
-                    Serial.printf("[WM]   sensor_%d: base=%ld final=%ld delta=%ld\n",
-                                  i, baseline[i], final_values[i], delta[i]);
-                }
+        if (all_stable) {
+            for (int i = 0; i < NUM_SENSORS; i++) {
+                final_values[i] = readings[i];
+                delta[i] = final_values[i] - baseline[i];
             }
-        } else {
-            // Not stable — reset the stability timer
-            stable_since = now;
+
+            state = WM_OPERATION_COMPLETE;
+            Serial.println("[WM] operation complete:");
+            for (int i = 0; i < NUM_SENSORS; i++) {
+                Serial.printf("[WM]   sensor_%d: stable=%ld final=%ld delta=%ld\n",
+                              i, stable_weight[i], final_values[i], delta[i]);
+            }
         }
         break;
     }
@@ -193,10 +193,11 @@ void weight_monitor_update() {
     case WM_OPERATION_COMPLETE:
     case WM_TIMEOUT:
     case WM_IDLE:
-        // Nothing to do
         break;
     }
 }
+
+// ── Accessors ─────────────────────────────────────────────────────────────────
 
 WeightState weight_monitor_get_state() {
     return state;

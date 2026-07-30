@@ -3,7 +3,7 @@
 #include "config.h"
 
 // ── Debug: set to 1 to see per-sensor fresh/waiting logs ──────────────────────
-#define HX711_READ_LOG 1
+#define HX711_READ_LOG 0
 
 // ── Internal state ────────────────────────────────────────────────────────────
 

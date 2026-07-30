@@ -69,6 +69,9 @@
 // HX711 readiness timeout (ms) — how long to wait for a sensor to respond
 #define HX711_READY_TIMEOUT_MS 200
 
+// HX711 rate limit — minimum interval between polling loops (10 SPS ≈ 100 ms)
+#define HX711_SAMPLE_INTERVAL_MS 100
+
 // Minimum interval between reads of the same sensor (10 SPS = 100 ms between readings)
 #define HX711_READ_INTERVAL_MS 100
 
@@ -79,19 +82,13 @@
 // Maximum allowed variation during "stable" detection (must be < WEIGHT_CHANGE_THRESHOLD)
 #define WEIGHT_STABLE_TOLERANCE 200
 
-// How long (ms) the weight must stay stable after a change is detected
-#define WEIGHT_STABLE_TIME_MS 2000
+// Number of consecutive stable samples to confirm weight stability
+#define WEIGHT_STABLE_SAMPLES 5
 
 // Total operation timeout (ms) — cancel if user takes too long
 #define WEIGHT_OPERATION_TIMEOUT_MS 30000
 
-// How often (ms) to sample HX711 during weight monitoring
-#define WEIGHT_SAMPLE_INTERVAL_MS 100
-
 // Number of samples to average for baseline capture
 #define WEIGHT_BASELINE_SAMPLES 10
-
-// Delay between baseline samples (ms)
-#define WEIGHT_BASELINE_SAMPLE_DELAY_MS 50
 
 #endif
