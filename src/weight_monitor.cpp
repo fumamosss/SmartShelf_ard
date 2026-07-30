@@ -4,6 +4,7 @@
 static WeightState state = WM_IDLE;
 
 static long baseline[NUM_SENSORS] = {0};
+static int baseline_count[NUM_SENSORS] = {0};  // per-sensor sample counter
 static long current[NUM_SENSORS] = {0};
 static long final_values[NUM_SENSORS] = {0};
 static long delta[NUM_SENSORS] = {0};
@@ -23,6 +24,7 @@ void weight_monitor_start() {
     // Reset all values
     for (int i = 0; i < NUM_SENSORS; i++) {
         baseline[i] = 0;
+        baseline_count[i] = 0;
         current[i] = 0;
         final_values[i] = 0;
         delta[i] = 0;
@@ -50,26 +52,38 @@ void weight_monitor_update() {
         last_sample_time = now;
 
         long readings[NUM_SENSORS];
-        bool all_ok = load_cells_read_all(readings);
+        load_cells_read_all(readings);
 
-        if (!all_ok) {
-            // Some sensors not responding — log but continue with what we have
-            Serial.printf("[WM] baseline sample %d: partial read (%d/%d sensors)\n",
-                          baseline_sample_count + 1,
-                          load_cells_get_healthy_count(), NUM_SENSORS);
-        }
-
-        // Accumulate
+        // Per-sensor accumulation — only fresh readings count
+        bool any_fresh = false;
         for (int i = 0; i < NUM_SENSORS; i++) {
-            baseline[i] += readings[i];
+            if (load_cells_has_new_data(i)) {
+                baseline[i] += readings[i];
+                baseline_count[i]++;
+                any_fresh = true;
+            }
         }
-        baseline_sample_count++;
 
-        // Check if we have enough samples
-        if (baseline_sample_count >= WEIGHT_BASELINE_SAMPLES) {
-            // Average
+        if (!any_fresh) {
+            // Nothing new this cycle — retry without counting
+            return;
+        }
+
+        // Check if all online sensors have enough samples
+        bool baseline_done = true;
+        for (int i = 0; i < NUM_SENSORS; i++) {
+            if (load_cells_is_online(i) && baseline_count[i] < WEIGHT_BASELINE_SAMPLES) {
+                baseline_done = false;
+                break;
+            }
+        }
+
+        if (baseline_done) {
+            // Average per sensor (each may have its own count)
             for (int i = 0; i < NUM_SENSORS; i++) {
-                baseline[i] /= WEIGHT_BASELINE_SAMPLES;
+                if (baseline_count[i] > 0) {
+                    baseline[i] /= baseline_count[i];
+                }
             }
 
             state = WM_WAITING_FOR_CHANGE;

@@ -47,27 +47,30 @@
 #define NFC_REPEAT_DELAY_MS 3000
 
 // ── HX711 Load Cells ────────────────────────────────────────────────────────
-#define NUM_SENSORS 8
-#define SENSORS_PER_SHELF 4
-#define NUM_SHELVES 2
+#define NUM_SENSORS 3
+#define SENSORS_PER_SHELF 3
+#define NUM_SHELVES 1
 
 // TODO: SET YOUR HX711 DT PINS — one per sensor
 // Shelf 0: sensors 0..3
 // Shelf 1: sensors 4..7
-#define HX711_DT_PINS { 4, 5, 16, 17, 18, 19, 23, 25 }
+#define HX711_DT_PINS {19, 23, 25 }
 
 // TODO: SET YOUR HX711 SCK PINS — one per sensor (or all same for shared SCK)
-#define HX711_SCK_PINS { 26, 26, 26, 26, 26, 26, 26, 26 }
+#define HX711_SCK_PINS {26, 26, 26 }
 
 // HX711 gain: 128 (default), 64, or 32
 #define HX711_GAIN 128
 
 // TODO: SET CALIBRATION FACTORS AFTER HARDWARE TEST
 // One factor per sensor. 1.0 = raw readings. Calibrate with known weight.
-#define HX711_CALIBRATION_FACTORS { 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0 }
+#define HX711_CALIBRATION_FACTORS {1.0, 1.0, 1.0 }
 
 // HX711 readiness timeout (ms) — how long to wait for a sensor to respond
 #define HX711_READY_TIMEOUT_MS 200
+
+// Minimum interval between reads of the same sensor (10 SPS = 100 ms between readings)
+#define HX711_READ_INTERVAL_MS 100
 
 // ── Weight Algorithm ────────────────────────────────────────────────────────
 // Minimum raw value change to consider a sensor has moved
