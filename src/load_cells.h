@@ -46,4 +46,17 @@ const char* load_cells_sensor_status(int sensor_id);
 // Get number of sensors that responded at init.
 int load_cells_get_healthy_count();
 
+// Get the offset (tare ADC) for a sensor.
+long load_cells_get_offset(int sensor_id);
+
+// Get the scale (ADC per gram) for a sensor.
+float load_cells_get_scale(int sensor_id);
+
+// Convert raw ADC to grams using offset + scale.
+// Returns (raw - offset) / scale.
+float load_cells_raw_to_grams(int sensor_id, long raw_adc);
+
+// Get the current cached weight in grams for a sensor (convenience).
+float load_cells_get_weight_grams(int sensor_id);
+
 #endif

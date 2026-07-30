@@ -157,6 +157,9 @@ bool load_cells_consume_new_data(int sensor_id, long* value) {
 
 // ── Utility accessors ─────────────────────────────────────────────────────────
 
+static const long OFFSETS[NUM_SENSORS]  = HX711_OFFSETS;
+static const float SCALES[NUM_SENSORS]  = HX711_SCALES;
+
 long load_cells_get_cached(int sensor_id) {
     if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0;
     return cached_values[sensor_id];
@@ -185,4 +188,26 @@ const char* load_cells_sensor_status(int sensor_id) {
 
 int load_cells_get_healthy_count() {
     return healthy_count;
+}
+
+// ── Calibration accessors ─────────────────────────────────────────────────────
+
+long load_cells_get_offset(int sensor_id) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0;
+    return OFFSETS[sensor_id];
+}
+
+float load_cells_get_scale(int sensor_id) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 1.0f;
+    return SCALES[sensor_id];
+}
+
+float load_cells_raw_to_grams(int sensor_id, long raw_adc) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0.0f;
+    return (float)(raw_adc - OFFSETS[sensor_id]) / SCALES[sensor_id];
+}
+
+float load_cells_get_weight_grams(int sensor_id) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0.0f;
+    return (float)(cached_values[sensor_id] - OFFSETS[sensor_id]) / SCALES[sensor_id];
 }

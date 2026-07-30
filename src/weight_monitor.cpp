@@ -78,11 +78,13 @@ void weight_monitor_update() {
                 if (baseline_count[i] > 0) {
                     baseline[i] /= baseline_count[i];
                 }
-                Serial.printf("[WM]   sensor %d online samples=%d value=%ld\n",
-                              i, baseline_count[i], baseline[i]);
+                float weight_g = load_cells_raw_to_grams(i, baseline[i]);
+                Serial.printf("[WM]   sensor %d online samples=%d raw=%ld offset=%ld weight=%.0f\n",
+                              i, baseline_count[i], baseline[i],
+                              load_cells_get_offset(i), weight_g);
             } else {
                 baseline[i] = 0;
-                Serial.printf("[WM]   sensor %d offline samples=%d value=%ld\n",
+                Serial.printf("[WM]   sensor %d offline samples=%d raw=%ld\n",
                               i, baseline_count[i], baseline[i]);
             }
             stable_weight[i] = baseline[i];
@@ -184,8 +186,9 @@ void weight_monitor_update() {
             state = WM_OPERATION_COMPLETE;
             Serial.println("[WM] operation complete:");
             for (int i = 0; i < NUM_SENSORS; i++) {
-                Serial.printf("[WM]   sensor_%d: stable=%ld final=%ld delta=%ld\n",
-                              i, stable_weight[i], final_values[i], delta[i]);
+                float grams = load_cells_raw_to_grams(i, final_values[i]);
+                Serial.printf("[WM]   sensor_%d: stable=%ld final=%ld delta=%ld  (%.0f g)\n",
+                              i, stable_weight[i], final_values[i], delta[i], grams);
             }
         }
         break;

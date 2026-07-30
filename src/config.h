@@ -62,9 +62,13 @@
 // HX711 gain: 128 (default), 64, or 32
 #define HX711_GAIN 128
 
-// TODO: SET CALIBRATION FACTORS AFTER HARDWARE TEST
-// One factor per sensor. 1.0 = raw readings. Calibrate with known weight.
-#define HX711_CALIBRATION_FACTORS {1.0, 1.0, 1.0 }
+// ── HX711 Raw Calibration ──────────────────────────────────────────────────
+// Offset (raw value at empty shelf) per sensor. Captured by baseline.
+#define HX711_OFFSETS { -483038L, 373148L, 626405L, 550420L, -264415L, -88745L, 286567L, 420229L }
+
+// Scale (ADC units per gram) per sensor. 1.0 = raw delta ≈ grams.
+// Calibrate with known weight: scale = (raw_with_load - offset) / grams
+#define HX711_SCALES  { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }
 
 // HX711 readiness timeout (ms) — how long to wait for a sensor to respond
 #define HX711_READY_TIMEOUT_MS 200
