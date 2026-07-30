@@ -29,6 +29,7 @@ void setup() {
     // ── Hardware initialization ──────────────────────────────────────────────
     nfc_begin();
     load_cells_begin();
+    load_cells_tare();
     weight_monitor_begin();
 
     // ── Wi-Fi connection ─────────────────────────────────────────────────────

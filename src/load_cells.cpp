@@ -30,6 +30,9 @@ static unsigned long last_read_time[NUM_SENSORS] = {0};
 static int robin_start = 0;
 static int healthy_count = 0;
 
+// Tare offsets — set at boot, subtracted from raw to get normalized value
+static long tare_offsets[NUM_SENSORS] = {0};
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 bool load_cells_begin() {
@@ -77,7 +80,65 @@ bool load_cells_begin() {
     return healthy_count > 0;
 }
 
-// ── Read single sensor ────────────────────────────────────────────────────────
+// ── Tare — sample empty shelf, store zero offsets ────────────────────────────
+
+void load_cells_tare() {
+    Serial.println("[LOAD] tare — sampling...");
+    long accum[NUM_SENSORS] = {0};
+    int count[NUM_SENSORS] = {0};
+
+    unsigned long start = millis();
+    unsigned long last_poll = 0;
+
+    while (true) {
+        unsigned long now = millis();
+
+        // Yield to other tasks
+        if (now - last_poll < HX711_SAMPLE_INTERVAL_MS) {
+            delay(10);
+            continue;
+        }
+        last_poll = now;
+
+        long readings[NUM_SENSORS];
+        load_cells_read_all(readings);
+
+        for (int i = 0; i < NUM_SENSORS; i++) {
+            long val;
+            if (!load_cells_consume_new_data(i, &val)) continue;
+            accum[i] += val;
+            count[i]++;
+        }
+
+        // Done when every online sensor has enough samples, or timeout
+        bool done = true;
+        for (int i = 0; i < NUM_SENSORS; i++) {
+            if (sensor_online[i] && count[i] < TARE_SAMPLES) {
+                done = false;
+                break;
+            }
+        }
+        if (done || (now - start) >= 10000) break;
+    }
+
+    Serial.println("[LOAD] tare complete:");
+    for (int i = 0; i < NUM_SENSORS; i++) {
+        if (count[i] > 0) {
+            tare_offsets[i] = accum[i] / count[i];
+        } else {
+            tare_offsets[i] = cached_values[i];  // fallback to single read
+        }
+        Serial.printf("[LOAD]   sensor %d: offset=%ld (samples=%d)\n",
+                      i, tare_offsets[i], count[i]);
+    }
+}
+
+// ── Apply tare offset (normalize raw to empty-shelf reference) ────────────────
+
+long load_cells_apply_tare(int sensor_id, long raw_adc) {
+    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return raw_adc;
+    return raw_adc - tare_offsets[sensor_id];
+}
 
 long load_cells_read_raw(int sensor_id) {
     if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0;
@@ -157,9 +218,6 @@ bool load_cells_consume_new_data(int sensor_id, long* value) {
 
 // ── Utility accessors ─────────────────────────────────────────────────────────
 
-static const long OFFSETS[NUM_SENSORS]  = HX711_OFFSETS;
-static const float SCALES[NUM_SENSORS]  = HX711_SCALES;
-
 long load_cells_get_cached(int sensor_id) {
     if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0;
     return cached_values[sensor_id];
@@ -190,24 +248,7 @@ int load_cells_get_healthy_count() {
     return healthy_count;
 }
 
-// ── Calibration accessors ─────────────────────────────────────────────────────
-
 long load_cells_get_offset(int sensor_id) {
     if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0;
-    return OFFSETS[sensor_id];
-}
-
-float load_cells_get_scale(int sensor_id) {
-    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 1.0f;
-    return SCALES[sensor_id];
-}
-
-float load_cells_raw_to_grams(int sensor_id, long raw_adc) {
-    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0.0f;
-    return (float)(raw_adc - OFFSETS[sensor_id]) / SCALES[sensor_id];
-}
-
-float load_cells_get_weight_grams(int sensor_id) {
-    if (sensor_id < 0 || sensor_id >= NUM_SENSORS) return 0.0f;
-    return (float)(cached_values[sensor_id] - OFFSETS[sensor_id]) / SCALES[sensor_id];
+    return tare_offsets[sensor_id];
 }

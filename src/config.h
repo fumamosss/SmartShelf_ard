@@ -62,13 +62,8 @@
 // HX711 gain: 128 (default), 64, or 32
 #define HX711_GAIN 128
 
-// ── HX711 Raw Calibration ──────────────────────────────────────────────────
-// Offset (raw value at empty shelf) per sensor. Captured by baseline.
-#define HX711_OFFSETS { -483038L, 373148L, 626405L, 550420L, -264415L, -88745L, 286567L, 420229L }
-
-// Scale (ADC units per gram) per sensor. 1.0 = raw delta ≈ grams.
-// Calibrate with known weight: scale = (raw_with_load - offset) / grams
-#define HX711_SCALES  { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f }
+// Boot tare: how many fresh samples to average per sensor for zero offset
+#define TARE_SAMPLES 10
 
 // HX711 readiness timeout (ms) — how long to wait for a sensor to respond
 #define HX711_READY_TIMEOUT_MS 200
@@ -80,10 +75,15 @@
 #define HX711_READ_INTERVAL_MS 100
 
 // ── Weight Algorithm ────────────────────────────────────────────────────────
-// Minimum raw value change to consider a sensor has moved
-#define WEIGHT_CHANGE_THRESHOLD 500
+// Minimum per-shelf delta to consider a change (4-sensor sum).
+// With noise threshold of 200 per sensor, 4 sensors sum to 800 worst-case noise.
+// Set 1500+ to avoid false triggers from summed noise.
+#define WEIGHT_CHANGE_THRESHOLD 1500
 
-// Maximum allowed variation during "stable" detection (must be < WEIGHT_CHANGE_THRESHOLD)
+// Small per-sensor changes below this are treated as noise (delta = 0)
+#define WEIGHT_NOISE_THRESHOLD 200
+
+// Maximum allowed variation during "stable" detection
 #define WEIGHT_STABLE_TOLERANCE 200
 
 // Number of consecutive stable samples to confirm weight stability

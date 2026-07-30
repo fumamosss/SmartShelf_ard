@@ -1,26 +1,43 @@
 #include "weight_monitor.h"
 #include "load_cells.h"
 
-static WeightState state = WM_IDLE;
+// ── Shelf geometry ────────────────────────────────────────────────────────────
+#define NUM_SHELVES 2
 
-// ── Baseline tracking (per-sensor) ────────────────────────────────────────────
+// Which shelf a sensor belongs to (0-based)
+static inline int sensor_shelf(int id) {
+    return (id < 4) ? 0 : 1;
+}
+
+// Per-sensor (keep for API compatibility)
 static long baseline[NUM_SENSORS] = {0};
 static int baseline_count[NUM_SENSORS] = {0};
-
-// ── Current stable reference (pre-change) ────────────────────────────────────
-static long stable_weight[NUM_SENSORS] = {0};
-
-// ── Stabilization tracking ────────────────────────────────────────────────────
-static long changing_ref[NUM_SENSORS] = {0};   // first reading after change
-static int stable_samples[NUM_SENSORS] = {0};  // per-sensor consecutive stable count
-
-// ── Operation results ─────────────────────────────────────────────────────────
 static long final_values[NUM_SENSORS] = {0};
 static long delta[NUM_SENSORS] = {0};
 
-// ── Timing ────────────────────────────────────────────────────────────────────
+// Per-shelf state
+static long shelf_baseline[NUM_SHELVES] = {0};       // baseline shelf total (sum of normalized baselines)
+static long shelf_changing_ref[NUM_SHELVES] = {0};   // shelf total at change moment
+static int  shelf_stable_samples[NUM_SHELVES] = {0}; // consecutive stable counts
+static bool shelf_changed[NUM_SHELVES] = {false};
+
+// Timing
 static unsigned long last_poll_time = 0;
 static unsigned long operation_start = 0;
+static WeightState state = WM_IDLE;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Sum of normalized sensor values for a shelf (actual weight, for stabilization).
+static long compute_shelf_total(int shelf_id, const long norms[NUM_SENSORS]) {
+    long total = 0;
+    int first = shelf_id * 4;
+    int last  = first + 4;
+    for (int i = first; i < last; i++) {
+        total += norms[i];
+    }
+    return total;
+}
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -33,11 +50,14 @@ void weight_monitor_start() {
     for (int i = 0; i < NUM_SENSORS; i++) {
         baseline[i]         = 0;
         baseline_count[i]   = 0;
-        stable_weight[i]    = 0;
-        changing_ref[i]     = 0;
-        stable_samples[i]   = 0;
         final_values[i]     = 0;
         delta[i]            = 0;
+    }
+    for (int k = 0; k < NUM_SHELVES; k++) {
+        shelf_baseline[k]        = 0;
+        shelf_changing_ref[k]    = 0;
+        shelf_stable_samples[k]  = 0;
+        shelf_changed[k]         = false;
     }
     last_poll_time   = 0;
     operation_start  = millis();
@@ -51,13 +71,14 @@ void weight_monitor_update() {
     if (now - last_poll_time < HX711_SAMPLE_INTERVAL_MS) return;
     last_poll_time = now;
 
+    long norms[NUM_SENSORS] = {0};  // populated from fresh data
+
     switch (state) {
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  CAPTURING BASELINE — each sensor collects N fresh readings
+    //  CAPTURING BASELINE — accumulate fresh normalized readings, time-windowed
     // ═══════════════════════════════════════════════════════════════════════════
     case WM_CAPTURING_BASELINE: {
-        // Time-window based: accumulate fresh readings until timer expires
         if (now - operation_start < BASELINE_CAPTURE_TIME_MS) {
             long readings[NUM_SENSORS];
             load_cells_read_all(readings);
@@ -65,29 +86,31 @@ void weight_monitor_update() {
             for (int i = 0; i < NUM_SENSORS; i++) {
                 long fresh_val;
                 if (!load_cells_consume_new_data(i, &fresh_val)) continue;
-                baseline[i] += fresh_val;
+                long norm = load_cells_apply_tare(i, fresh_val);
+                baseline[i] += norm;
                 baseline_count[i]++;
             }
             break;
         }
 
-        // Time window expired — compute per-sensor average
+        // Time window expired — per-sensor averages & shelf baselines
         Serial.println("[WM] baseline complete:");
         for (int i = 0; i < NUM_SENSORS; i++) {
-            if (load_cells_is_online(i)) {
-                if (baseline_count[i] > 0) {
-                    baseline[i] /= baseline_count[i];
-                }
-                float weight_g = load_cells_raw_to_grams(i, baseline[i]);
-                Serial.printf("[WM]   sensor %d online samples=%d raw=%ld offset=%ld weight=%.0f\n",
-                              i, baseline_count[i], baseline[i],
-                              load_cells_get_offset(i), weight_g);
+            if (load_cells_is_online(i) && baseline_count[i] > 0) {
+                baseline[i] /= baseline_count[i];
             } else {
                 baseline[i] = 0;
-                Serial.printf("[WM]   sensor %d offline samples=%d raw=%ld\n",
-                              i, baseline_count[i], baseline[i]);
             }
-            stable_weight[i] = baseline[i];
+            Serial.printf("[WM]   sensor %d: samples=%d value=%ld\n",
+                          i, baseline_count[i], baseline[i]);
+        }
+
+        for (int k = 0; k < NUM_SHELVES; k++) {
+            int first = k * 4;
+            shelf_baseline[k] = 0;
+            for (int i = first; i < first + 4; i++) {
+                shelf_baseline[k] += baseline[i];
+            }
         }
 
         state = WM_WAITING_FOR_CHANGE;
@@ -96,7 +119,7 @@ void weight_monitor_update() {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  WAITING FOR CHANGE — compare fresh readings against stable_weight
+    //  WAITING FOR CHANGE — compare shelf totals against shelf baselines
     // ═══════════════════════════════════════════════════════════════════════════
     case WM_WAITING_FOR_CHANGE: {
         if (now - operation_start > WEIGHT_OPERATION_TIMEOUT_MS) {
@@ -108,35 +131,50 @@ void weight_monitor_update() {
         long readings[NUM_SENSORS];
         load_cells_read_all(readings);
 
-        // Check any sensor changed significantly from stable weight
-        bool changed = false;
+        // Build normalized array from fresh data (fallback to cached for stale)
         for (int i = 0; i < NUM_SENSORS; i++) {
-            long fresh_val;
-            if (!load_cells_consume_new_data(i, &fresh_val)) continue;
+            norms[i] = load_cells_apply_tare(i, readings[i]);
+        }
 
-            long diff = fresh_val - stable_weight[i];
-            if (diff < 0) diff = -diff;
+        bool any_changed = false;
+        for (int k = 0; k < NUM_SHELVES; k++) {
+            int first = k * 4;
+            long shelf_delta = 0;
 
-            if (diff > WEIGHT_CHANGE_THRESHOLD) {
-                changed = true;
-                break;
+            // Sum of noise-filtered per-sensor deltas
+            for (int i = first; i < first + 4; i++) {
+                long d = norms[i] - baseline[i];
+                if (d < 0) d = -d;
+                if (d > WEIGHT_NOISE_THRESHOLD) {
+                    shelf_delta += (norms[i] - baseline[i]);
+                }
+                // else: |delta| ≤ noise threshold → treat as 0
+            }
+
+            if (shelf_delta < 0) shelf_delta = -shelf_delta;
+            if (shelf_delta > WEIGHT_CHANGE_THRESHOLD) {
+                shelf_changed[k] = true;
+                // Capture absolute shelf weight at change moment (unfiltered)
+                shelf_changing_ref[k] = compute_shelf_total(k, norms);
+                shelf_stable_samples[k] = 0;
+                any_changed = true;
+                Serial.printf("[WM] shelf %d change: delta=%ld\n", k, shelf_delta);
             }
         }
 
-        if (changed) {
-            // Capture reference values at change moment
-            for (int i = 0; i < NUM_SENSORS; i++) {
-                changing_ref[i] = readings[i];
-                stable_samples[i] = 0;
+        if (any_changed) {
+            // Pre-mark unchanged shelves as stable
+            for (int k = 0; k < NUM_SHELVES; k++) {
+                if (!shelf_changed[k]) shelf_stable_samples[k] = WEIGHT_STABLE_SAMPLES;
             }
             state = WM_WAITING_FOR_STABLE;
-            Serial.println("[WM] weight change detected — waiting for stability...");
+            Serial.println("[WM] waiting for stability...");
         }
         break;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  WAITING FOR STABLE — collect N consecutive stable fresh readings
+    //  WAITING FOR STABLE — each changed shelf must hold steady for N samples
     // ═══════════════════════════════════════════════════════════════════════════
     case WM_WAITING_FOR_STABLE: {
         if (now - operation_start > WEIGHT_OPERATION_TIMEOUT_MS) {
@@ -148,30 +186,32 @@ void weight_monitor_update() {
         long readings[NUM_SENSORS];
         load_cells_read_all(readings);
 
-        // Per-sensor stability check against the reference (changing_ref)
         for (int i = 0; i < NUM_SENSORS; i++) {
-            long fresh_val;
-            if (!load_cells_consume_new_data(i, &fresh_val)) continue;
+            norms[i] = load_cells_apply_tare(i, readings[i]);
+        }
 
-            long diff = fresh_val - changing_ref[i];
+        for (int k = 0; k < NUM_SHELVES; k++) {
+            if (!shelf_changed[k]) continue;
+
+            long shelf_total = compute_shelf_total(k, norms);
+            long diff = shelf_total - shelf_changing_ref[k];
             if (diff < 0) diff = -diff;
 
             if (diff <= WEIGHT_STABLE_TOLERANCE) {
-                stable_samples[i]++;
-                if (stable_samples[i] > WEIGHT_STABLE_SAMPLES)
-                    stable_samples[i] = WEIGHT_STABLE_SAMPLES;
+                shelf_stable_samples[k]++;
+                if (shelf_stable_samples[k] > WEIGHT_STABLE_SAMPLES)
+                    shelf_stable_samples[k] = WEIGHT_STABLE_SAMPLES;
             } else {
-                // Jump detected — shift reference, reset this sensor's counter
-                changing_ref[i] = fresh_val;
-                stable_samples[i] = 0;
+                shelf_changing_ref[k] = shelf_total;
+                shelf_stable_samples[k] = 0;
             }
         }
 
-        // All online sensors must have reached the stable sample count
+        // All changed shelves must be stable
         bool all_stable = true;
-        for (int i = 0; i < NUM_SENSORS; i++) {
-            if (!load_cells_is_online(i)) continue;
-            if (stable_samples[i] < WEIGHT_STABLE_SAMPLES) {
+        for (int k = 0; k < NUM_SHELVES; k++) {
+            if (!shelf_changed[k]) continue;
+            if (shelf_stable_samples[k] < WEIGHT_STABLE_SAMPLES) {
                 all_stable = false;
                 break;
             }
@@ -179,16 +219,25 @@ void weight_monitor_update() {
 
         if (all_stable) {
             for (int i = 0; i < NUM_SENSORS; i++) {
-                final_values[i] = readings[i];
+                final_values[i] = norms[i];
                 delta[i] = final_values[i] - baseline[i];
             }
 
             state = WM_OPERATION_COMPLETE;
             Serial.println("[WM] operation complete:");
             for (int i = 0; i < NUM_SENSORS; i++) {
-                float grams = load_cells_raw_to_grams(i, final_values[i]);
-                Serial.printf("[WM]   sensor_%d: stable=%ld final=%ld delta=%ld  (%.0f g)\n",
-                              i, stable_weight[i], final_values[i], delta[i], grams);
+                Serial.printf("[WM]   sensor_%d: value=%ld delta=%ld\n",
+                              i, final_values[i], delta[i]);
+            }
+            for (int k = 0; k < NUM_SHELVES; k++) {
+                if (shelf_changed[k]) {
+                    long shelf_delta = 0;
+                    int first = k * 4;
+                    for (int i = first; i < first + 4; i++) {
+                        shelf_delta += delta[i];
+                    }
+                    Serial.printf("[WM]   shelf %d total delta=%ld\n", k, shelf_delta);
+                }
             }
         }
         break;
