@@ -57,39 +57,36 @@ void weight_monitor_update() {
     //  CAPTURING BASELINE — each sensor collects N fresh readings
     // ═══════════════════════════════════════════════════════════════════════════
     case WM_CAPTURING_BASELINE: {
-        long readings[NUM_SENSORS];
-        load_cells_read_all(readings);
+        // Time-window based: accumulate fresh readings until timer expires
+        if (now - operation_start < BASELINE_CAPTURE_TIME_MS) {
+            long readings[NUM_SENSORS];
+            load_cells_read_all(readings);
 
-        // Accumulate only fresh readings per sensor
-        for (int i = 0; i < NUM_SENSORS; i++) {
-            if (!load_cells_has_new_data(i)) continue;
-            baseline[i] += readings[i];
-            baseline_count[i]++;
-        }
-
-        // Check completion — all online sensors must hit WEIGHT_BASELINE_SAMPLES
-        bool done = true;
-        for (int i = 0; i < NUM_SENSORS; i++) {
-            if (!load_cells_is_online(i)) continue;
-            if (baseline_count[i] >= WEIGHT_BASELINE_SAMPLES) {
-                // Print milestone once (count just hit the target)
-                if (baseline_count[i] == WEIGHT_BASELINE_SAMPLES) {
-                    baseline[i] /= WEIGHT_BASELINE_SAMPLES;
-                    Serial.printf("[WM] baseline sensor %d: %d/%d\n",
-                                  i, WEIGHT_BASELINE_SAMPLES, WEIGHT_BASELINE_SAMPLES);
-                }
-            } else {
-                done = false;
-            }
-        }
-
-        if (done) {
             for (int i = 0; i < NUM_SENSORS; i++) {
-                stable_weight[i] = baseline[i];
+                if (!load_cells_has_new_data(i)) continue;
+                baseline[i] += readings[i];
+                baseline_count[i]++;
             }
-            state = WM_WAITING_FOR_CHANGE;
-            Serial.println("[WM] baseline complete — monitoring for change");
+            break;
         }
+
+        // Time window expired — compute per-sensor average
+        Serial.println("[WM] baseline complete:");
+        for (int i = 0; i < NUM_SENSORS; i++) {
+            if (load_cells_is_online(i) && baseline_count[i] > 0) {
+                baseline[i] /= baseline_count[i];
+                Serial.printf("[WM]   sensor %d: samples=%d value=%ld\n",
+                              i, baseline_count[i], baseline[i]);
+            } else {
+                baseline[i] = 0;
+                Serial.printf("[WM]   sensor %d: samples=%d value=%ld (offline)\n",
+                              i, baseline_count[i], baseline[i]);
+            }
+            stable_weight[i] = baseline[i];
+        }
+
+        state = WM_WAITING_FOR_CHANGE;
+        Serial.println("[WM] monitoring for change");
         break;
     }
 

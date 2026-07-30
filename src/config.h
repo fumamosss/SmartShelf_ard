@@ -88,7 +88,7 @@
 // Total operation timeout (ms) — cancel if user takes too long
 #define WEIGHT_OPERATION_TIMEOUT_MS 30000
 
-// Number of samples to average for baseline capture
-#define WEIGHT_BASELINE_SAMPLES 10
+// Baseline capture window (ms) — accumulate fresh readings for this duration, then average per sensor
+#define BASELINE_CAPTURE_TIME_MS 2000
 
 #endif
